@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Captura de asistencia</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;padding:18px;font-family:Arial,sans-serif;background:#f2f4f7;color:#202124;display:flex;justify-content:center}
+  main{width:100%;max-width:460px;background:#fff;padding:20px;border-radius:16px;box-shadow:0 4px 18px #0002;text-align:center}
+  h1{font-size:23px;margin:5px 0 10px} p{line-height:1.45;color:#444}
+  video,img{display:block;width:100%;border-radius:12px;background:#111;margin:12px auto;max-height:62vh;object-fit:contain}
+  button{width:100%;border:0;border-radius:10px;padding:15px;margin-top:10px;font-size:16px;font-weight:bold;background:#1769e0;color:#fff;cursor:pointer}
+  button:disabled{opacity:.55;cursor:wait}.secondary{background:#5f6368} #estado{font-size:14px;min-height:44px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<main>
+  <h1>CAPTURA FOTOGRÁFICA</h1>
+  <p>Centre su rostro y pulse <b>TOMAR FOTOGRAFÍA</b>. La asistencia no se registrará hasta que la fotografía llegue al sistema.</p>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas" hidden></canvas>
+  <img id="preview" alt="Vista previa" hidden>
+  <div id="estado">Iniciando cámara…</div>
+  <button id="capturar" disabled>TOMAR FOTOGRAFÍA</button>
+  <button id="reintentar" class="secondary" hidden>REINTENTAR CÁMARA</button>
+  <button id="cancelar" class="secondary">CANCELAR</button>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+const nonce = params.get('nonce') || '';
+const targetOrigin = params.get('targetOrigin') || '';
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const preview = document.getElementById('preview');
+const estado = document.getElementById('estado');
+const capturar = document.getElementById('capturar');
+const reintentar = document.getElementById('reintentar');
+const cancelar = document.getElementById('cancelar');
+let stream = null;
+let fotoLista = false;
+
+function cerrarStream(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.srcObject=null;
+}
+async function iniciar(){
+  cerrarStream();
+  capturar.disabled=true;
+  reintentar.hidden=true;
+  preview.hidden=true;
+  video.hidden=false;
+  estado.textContent='Solicitando acceso a la cámara…';
+  try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Este navegador no permite usar la cámara en esta página. Ábrala con HTTPS en Chrome o Edge.');
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:1280},height:{ideal:720}},audio:false});
+    }catch(e){
+      stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+    }
+    video.srcObject=stream;
+    await video.play();
+    capturar.disabled=false;
+    estado.textContent='Cámara activa. Tome la fotografía cuando esté listo.';
+  }catch(e){
+    const name=e && e.name ? e.name : 'Error';
+    estado.textContent='No se pudo activar la cámara ('+name+'). '+(e && e.message ? e.message : 'Compruebe el permiso de cámara para este sitio HTTPS.');
+    reintentar.hidden=false;
+  }
+}
+function enviar(payload){
+  if(!window.opener || window.opener.closed){
+    estado.textContent='No se encontró la ventana del sistema de asistencia. Cierre esta ventana y vuelva a abrir la cámara desde el sistema.';
+    return false;
+  }
+  window.opener.postMessage({...payload,nonce},targetOrigin || '*');
+  return true;
+}
+capturar.addEventListener('click',()=>{
+  if(!stream || video.readyState<2 || !video.videoWidth){estado.textContent='La cámara todavía no está lista.';return;}
+  canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+  const fotoBase64=canvas.toDataURL('image/jpeg',0.72);
+  if(fotoBase64.length>6500000){estado.textContent='La imagen pesa demasiado. Acérquese y vuelva a tomarla.';return;}
+  preview.src=fotoBase64; preview.hidden=false; video.hidden=true;
+  cerrarStream();
+  if(enviar({type:'ASISTENCIA_FOTO',fotoBase64})){
+    fotoLista=true; estado.textContent='Fotografía enviada al sistema. Esta ventana se cerrará.';
+    capturar.disabled=true; cancelar.disabled=true;
+    setTimeout(()=>window.close(),350);
+  }
+});
+reintentar.addEventListener('click',iniciar);
+cancelar.addEventListener('click',()=>{
+  cerrarStream();
+  if(window.opener && !window.opener.closed) enviar({type:'ASISTENCIA_CAMARA_CANCELADA'});
+  window.close();
+});
+window.addEventListener('beforeunload',cerrarStream);
+if(!nonce || !targetOrigin){estado.textContent='Faltan parámetros de seguridad. Cierre esta ventana y ábrala desde el sistema de asistencia.';capturar.disabled=true;}
+else iniciar();
+</script>
+</body>
+</html>
